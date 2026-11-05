@@ -17,6 +17,14 @@ for (const u of [
   'https://i.ebayimg.com/images/g/abcAAOSw123/s-l1600.jpg',
   'https://i.ebayimg.com/00/s/MTYwMFgxMjAw/z/abc/$_57.JPG?set_id=8800005007',
 ]) await t(u, () => assert.equal(safeImageUrl(u), new URL(u).href));
+const TX = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+for (const u of [
+  'https://files.bdrivex.com/u/abc/photo.jpg',
+  `https://ordfs.network/content/${TX}_0`,
+  `https://ordfs.network/${TX}_12`,
+  `https://api.1sat.app/content/${TX}_0`,
+  'https://api.1sat.app/content/abc123',
+]) await t(u, () => assert.equal(safeImageUrl(u), new URL(u).href));
 await t('upper-case scheme and host are normalised', () =>
   assert.equal(safeImageUrl('HTTPS://I.EBAYIMG.COM/images/g/x/s-l500.jpg'), 'https://i.ebayimg.com/images/g/x/s-l500.jpg'));
 
@@ -54,6 +62,27 @@ for (const u of [
   'https://i.ebayimg.com/x.jpg" onerror="alert(1)',
   ' https://i.ebayimg.com/x.jpg',
   'https://i.ebayimg.com/' + 'a'.repeat(2100),
+  'http://files.bdrivex.com/x.jpg',                            // new hosts: http, userinfo, port, wrong paths
+  'https://user:pw@files.bdrivex.com/x.jpg',
+  'https://files.bdrivex.com:8443/x.jpg',
+  'https://bdrivex.com/x.jpg',
+  'https://evil.files.bdrivex.com/x.jpg',
+  `https://user@ordfs.network/content/${TX}_0`,
+  `https://ordfs.network:444/content/${TX}_0`,
+  'https://ordfs.network/',
+  'https://ordfs.network/api/txos/x',
+  `https://ordfs.network/content/${TX}`,
+  `https://ordfs.network/content/${TX}_0/extra`,
+  `https://ordfs.network/content/../redirect?u=x`,
+  'https://ordfs.network/content/notanoutpoint_0',
+  `http://ordfs.network/content/${TX}_0`,
+  'https://api.1sat.app/other',
+  'https://api.1sat.app/v5/txos/x',
+  'https://api.1sat.app/content/',
+  'https://api.1sat.app/content/../v5/x',
+  'https://api.1sat.app/content%2f..%2fv5',
+  'https://user@api.1sat.app/content/x',
+  'https://1sat.app/content/x',
   'data:image/png;base64,AAAA',
   'javascript:alert(1)',
   'file:///etc/passwd',
@@ -145,21 +174,65 @@ for (const u of ['https://da.gd/abc', 'https://pay.bwallet.space/', 'https://mes
     assert.equal((await run(square, { id: '1' })).code, 404);
     assert.equal(outbound.length, 0, `fetched ${outbound.map((o) => o.url)}`);
   });
-await t('eBay photo is fetched with redirect:error and a timeout', async () => {
+await t('eBay photo is fetched with manual redirects and a timeout', async () => {
   listing = { images: ['https://i.ebayimg.com/images/g/x/s-l500.jpg'] };
   mockPhoto = () => new Response('<html>', { status: 200, headers: { 'content-type': 'text/html' } });
   outbound.length = 0;
   const r = await run(square, { id: '1' });
   assert.equal(outbound.length, 1);
   assert.equal(outbound[0].url, 'https://i.ebayimg.com/images/g/x/s-l1600.jpg');
-  assert.equal(outbound[0].init.redirect, 'error');
+  assert.equal(outbound[0].init.redirect, 'manual');
   assert.ok(outbound[0].init.signal instanceof AbortSignal);
   assert.equal(r.code, 404, 'text/html must be refused');
 });
-await t('a redirect (fetch throws with redirect:error) is a 404', async () => {
-  mockPhoto = () => { throw new TypeError('fetch failed: unexpected redirect'); };
+await t('a network error is a 404', async () => {
+  mockPhoto = () => { throw new TypeError('fetch failed'); };
   assert.equal((await run(square, { id: '1' })).code, 404);
 });
+const sharpMod = (await import('sharp')).default;
+const JPG = await sharpMod({ create: { width: 400, height: 300, channels: 3, background: '#c33' } }).jpeg().toBuffer();
+const jpgRes = () => new Response(JPG, { status: 200, headers: { 'content-type': 'image/jpeg' } });
+const redirect = (to) => new Response(null, { status: 302, headers: { location: to } });
+await t('a redirect to another host is a 404 (not followed)', async () => {
+  mockPhoto = () => redirect('https://169.254.169.254/latest/meta-data/');
+  outbound.length = 0;
+  assert.equal((await run(square, { id: '1' })).code, 404);
+  assert.equal(outbound.length, 1);
+});
+await t('a redirect to an allowlisted other host is still a 404', async () => {
+  mockPhoto = () => redirect('https://files.bdrivex.com/x.jpg');
+  outbound.length = 0;
+  assert.equal((await run(square, { id: '1' })).code, 404);
+  assert.equal(outbound.length, 1);
+});
+await t('ordfs: one same-host hop is followed', async () => {
+  listing = { images: [`https://ordfs.network/${TX}_0`] };
+  mockPhoto = (url) => (url.includes('/content/') ? jpgRes() : redirect(`/content/${TX}_0`));
+  outbound.length = 0;
+  assert.equal((await run(square, { id: '1' })).code, 200);
+  assert.deepEqual(outbound.map((o) => o.url), [`https://ordfs.network/${TX}_0`, `https://ordfs.network/content/${TX}_0`]);
+});
+await t('ordfs: a same-host hop to a path off the allowlist is a 404', async () => {
+  mockPhoto = () => redirect('/api/anything');
+  assert.equal((await run(square, { id: '1' })).code, 404);
+});
+await t('ordfs: a second hop is a 404', async () => {
+  mockPhoto = (url) => redirect(url.includes('/content/') ? `/${TX}_0` : `/content/${TX}_0`);
+  outbound.length = 0;
+  assert.equal((await run(square, { id: '1' })).code, 404);
+  assert.equal(outbound.length, 2);
+});
+await t('1sat: a same-host hop out of /content/ is a 404', async () => {
+  listing = { images: [`https://api.1sat.app/content/${TX}_0`] };
+  mockPhoto = () => redirect('https://api.1sat.app/v5/admin');
+  assert.equal((await run(square, { id: '1' })).code, 404);
+});
+await t('ordfs content that is SVG is a 404', async () => {
+  listing = { images: [`https://ordfs.network/content/${TX}_0`] };
+  mockPhoto = () => new Response('<svg/>', { status: 200, headers: { 'content-type': 'image/svg+xml' } });
+  assert.equal((await run(square, { id: '1' })).code, 404);
+});
+listing = { images: ['https://i.ebayimg.com/images/g/x/s-l500.jpg'] };
 await t('SVG is refused', async () => {
   mockPhoto = () => new Response('<svg/>', { status: 200, headers: { 'content-type': 'image/svg+xml' } });
   assert.equal((await run(square, { id: '1' })).code, 404);
@@ -173,12 +246,36 @@ await t('over 8 MB by content-length is a 404', async () => {
   assert.equal((await run(square, { id: '1' })).code, 404);
 });
 await t('a real JPEG from eBay makes the square', async () => {
-  const sharp = (await import('sharp')).default;
-  const jpg = await sharp({ create: { width: 400, height: 300, channels: 3, background: '#c33' } }).jpeg().toBuffer();
-  mockPhoto = () => new Response(jpg, { status: 200, headers: { 'content-type': 'image/jpeg', 'content-length': String(jpg.length) } });
+  mockPhoto = () => new Response(JPG, { status: 200, headers: { 'content-type': 'image/jpeg', 'content-length': String(JPG.length) } });
   const r = await run(square, { id: '1' });
   assert.equal(r.code, 200);
   assert.equal(r.headers['content-type'], 'image/jpeg');
+});
+
+console.log('on-chain listing (ordfs.network/content/<txid>_<vout>) end to end');
+const ONCHAIN = `https://ordfs.network/content/${TX}_0`;
+await t('item page JSON keeps it', async () => {
+  listing = { id: 9, title: 'Minted card', price_cents: 100, images: [ONCHAIN], store_handle: 's', logo: null };
+  assert.deepEqual((await run(item, { id: '9' })).body.item.images, [ONCHAIN]);
+});
+await t('og:image is it', async () => assert.equal(og((await run(page, { kind: 'itm', id: '9' })).body), ONCHAIN));
+await t('saving it is accepted', () => assert.deepEqual(toRow('s', { ...base, images: [ONCHAIN] }).images, [ONCHAIN]));
+await t('square renders it', async () => {
+  listing = { images: [ONCHAIN] };
+  mockPhoto = () => jpgRes();
+  outbound.length = 0;
+  assert.equal((await run(square, { id: '9' })).code, 200);
+  assert.equal(outbound[0].url, ONCHAIN);
+});
+// the browser copy of the allowlist (app.js okImg), which the grid, item page and logos use
+const appSrc = (await import('node:fs')).readFileSync(new URL('../app.js', import.meta.url), 'utf8');
+const okImg = new Function(appSrc.slice(appSrc.indexOf('const IMG_HOSTS'), appSrc.indexOf('const safeImg')) + 'return okImg;')();
+await t('grid / item page (app.js okImg) shows it', () => assert.ok(okImg(ONCHAIN)));
+await t('app.js okImg agrees with safeImageUrl on every case above', () => {
+  const cases = [ONCHAIN, `https://ordfs.network/${TX}_1`, 'https://files.bdrivex.com/a.jpg', 'https://api.1sat.app/content/x', 'https://i.ebayimg.com/a.jpg',
+    'https://api.1sat.app/other', `https://user@ordfs.network/content/${TX}_0`, 'https://ordfs.network/x', 'https://da.gd/x', 'http://i.ebayimg.com/a.jpg',
+    'https://pay.bwallet.space/', 'https://169.254.169.254/', 'https://i.ebayimg.com@evil.example/', 'https://i.ebayimg.com:8443/a.jpg'];
+  for (const c of cases) assert.equal(okImg(c), !!safeImageUrl(c), c);
 });
 
 console.log(`\n${pass} passed, ${failed} failed`);

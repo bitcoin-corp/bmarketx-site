@@ -19,7 +19,7 @@ async function read(f) {
   if (!map) { out.innerHTML = '<p class="err">We couldn’t find a <b>Title</b> column. Is this the “All active listings” report from Seller Hub?</p>'; return; }
   if (map.missing) { out.innerHTML = `<p class="err">This file has no <b>${map.missing}</b> column, so we can’t list the items. Columns found: ${esc(map.head.join(', '))}</p>`; return; }
   found = { ...toItems(rows, map), fileName: f.name, map };
-  // only eBay photo links are accepted (the server refuses others); leave the rest off and say so
+  // only allowlisted photo links are accepted (the server refuses others); leave the rest off and say so
   found.offPics = 0;
   for (const i of found.items) { const n = i.images.length; i.images = i.images.filter(window.BMX.okImg); found.offPics += n - i.images.length; }
   render();
@@ -33,7 +33,7 @@ function render() {
   out.innerHTML = `
     <div class="note" style="margin-top:16px"><b>${items.length.toLocaleString()} listings found</b> in ${esc(fileName)} · ${qty.toLocaleString()} items in stock · ${usd(value)} total at your prices
       ${skipped.length ? `<br><span class="err">${skipped.length} rows skipped</span> <span class="muted">(${esc(summary(skipped))})</span>` : ''}
-      ${offPics ? `<br><span class="err">${offPics.toLocaleString()} photo links left off</span> <span class="muted">(only eBay photo links, https://i.ebayimg.com/…, can be used)</span>` : ''}
+      ${offPics ? `<br><span class="err">${offPics.toLocaleString()} photo links left off</span> <span class="muted">(only eBay, bDriveX and on-chain ordfs.network / 1sat photo links can be used)</span>` : ''}
       ${currencies.some((c) => c !== 'USD') ? `<br><span class="err">Prices are in ${esc(currencies.join(', '))}.</span> bMarketX prices are in US dollars for now, so check them after the move.` : ''}
       ${noPics ? `<br><span class="muted">${noPics.toLocaleString()} listings have no photo link in this file. eBay’s active-listings report leaves photos out; add them after the move, or use the Store link tab to copy them.</span>` : ''}
     </div>

@@ -30,17 +30,44 @@ const clip = (v, n) => (v == null || v === '' ? null : String(v).slice(0, n));
 
 // Photo and logo links. Listing photos are fetched by our server (api/square.js), put in og:image (so X, WhatsApp
 // and our own bChatX unfurler fetch them) and loaded by every visitor's browser, so a seller-supplied link must
-// never point at our own services, private addresses, redirectors or trackers. Only these hosts are allowed:
-//   i.ebayimg.com  eBay's photo CDN: every eBay import (CSV PicURL, store page, Sign in with eBay) uses it.
-// bMarketX has no photo upload or storage of its own yet; when it gets one, add exactly that host here.
-const IMAGE_HOSTS = new Set(['i.ebayimg.com']);
-/** The link as a clean https URL on an allowed photo host, or null. Use the returned value, not the input. */
+// never point at our own services, private addresses, redirectors or trackers. Only these hosts (and paths):
+//   i.ebayimg.com      eBay's photo CDN: every eBay import (CSV PicURL, store page, Sign in with eBay) uses it.
+//   files.bdrivex.com  bDriveX storage, where sellers keep photos (bDriveX / bPhotosX).
+//   ordfs.network      on-chain content (items minted in the seller's wallet): /content/<txid>_<vout> or /<txid>_<vout> only.
+//   api.1sat.app       on-chain content: /content/… only.
+// Keep the copy in app.js (okImg) the same.
+const OUTPOINT_PATH = /^\/(content\/)?[0-9a-f]{64}_\d{1,6}$/i;
+const IMAGE_HOSTS = {
+  'i.ebayimg.com': () => true,
+  'files.bdrivex.com': () => true,
+  'ordfs.network': (p) => OUTPOINT_PATH.test(p),
+  'api.1sat.app': (p) => /^\/content\/[^/]/.test(p),
+};
+/** The link as a clean https URL on an allowed photo host and path, or null. Use the returned value, not the input. */
 export function safeImageUrl(url) {
   if (typeof url !== 'string' || url.length > 2048 || !/^https:\/\/[^\s"'<>\\]+$/i.test(url)) return null;
   let u;
   try { u = new URL(url); } catch { return null; }
-  if (u.protocol !== 'https:' || u.username || u.password || u.port || !IMAGE_HOSTS.has(u.hostname)) return null;
-  return u.href;
+  if (u.protocol !== 'https:' || u.username || u.password || u.port) return null;
+  const pathOk = Object.hasOwn(IMAGE_HOSTS, u.hostname) && IMAGE_HOSTS[u.hostname](u.pathname);
+  return pathOk ? u.href : null;
+}
+/** Fetch an allowlisted photo: no redirects, except at most one hop to the same host that is itself allowlisted
+ *  (ordfs / 1sat sometimes do that). 5 s in all. Returns the final Response, or null. */
+export async function fetchPhoto(src, { timeout = 5000 } = {}) {
+  const signal = AbortSignal.timeout(timeout);
+  let url = safeImageUrl(src);
+  for (let hop = 0; url && hop < 2; hop++) {
+    const r = await fetch(url, { redirect: 'manual', signal }).catch(() => null);
+    if (!r) return null;
+    if (r.status < 300 || r.status >= 400) return r;
+    await r.body?.cancel().catch(() => {});
+    let next = null;
+    try { next = safeImageUrl(new URL(r.headers.get('location') || '', url).href); } catch {}
+    if (!next || new URL(next).hostname !== new URL(url).hostname) return null;
+    url = next;
+  }
+  return null;
 }
 /** Content types we read as photos: raster only (no SVG, which can carry scripts and external references). */
 export const isImageType = (ct) => /^image\/(jpeg|png|webp|gif|avif)$/i.test(String(ct || '').split(';')[0].trim());
@@ -71,7 +98,7 @@ export function safeImages(list, { brand = true } = {}) {
 /** A stored store logo for the browser: the logo if allowed, the brand picture if not, null if none. */
 export const safeLogo = (u) => (u ? safeImageUrl(u) || BRAND_IMAGE : null);
 const photoError = (title, u) => Object.assign(new Error(
-  `The photo link for "${String(title).slice(0, 40)}" can’t be used (${String(u).slice(0, 80)}). Photos must be eBay photo links that start with https://i.ebayimg.com/.`,
+  `The photo link for "${String(title).slice(0, 40)}" can’t be used (${String(u).slice(0, 80)}). Photos must be eBay (i.ebayimg.com), bDriveX (files.bdrivex.com) or on-chain (ordfs.network/content/<txid>_<vout>, api.1sat.app/content/…) links.`,
 ), { status: 400 });
 
 /** One listing as a bmx_listings row, checked and trimmed. Anything a browser sends goes through here.

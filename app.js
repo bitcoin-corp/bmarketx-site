@@ -93,10 +93,15 @@
   function fillBsv(el) { if (usdPerBsv) el.textContent = `≈ ${(+el.dataset.bsv / 100 / usdPerBsv).toFixed(5)} BSV`; }
   const usd = (c) => '$' + (c / 100).toFixed(2);
 
-  // Photos and logos load only from the allowlisted photo host (as api/_util.js safeImageUrl). Anything else, such as
-  // an old link kept in this browser's Watchlist, shows the brand mark, so visitors never load a third-party URL.
+  // Photos and logos load only from the allowlisted photo hosts and paths (same as api/_util.js safeImageUrl). Anything
+  // else, such as an old link kept in this browser's Watchlist, shows the brand mark, so visitors never load a third-party URL.
   const BRAND_IMG = '/brand/mark.svg';
-  const okImg = (u) => /^https:\/\/i\.ebayimg\.com\/[^\s"'<>\\]*$/i.test(u || '');
+  const IMG_HOSTS = { 'i.ebayimg.com': () => true, 'files.bdrivex.com': () => true,
+    'ordfs.network': (p) => /^\/(content\/)?[0-9a-f]{64}_\d{1,6}$/i.test(p), 'api.1sat.app': (p) => /^\/content\/[^/]/.test(p) };
+  const okImg = (u) => {
+    if (typeof u !== 'string' || u.length > 2048 || !/^https:\/\/[^\s"'<>\\]+$/i.test(u)) return false;
+    try { const x = new URL(u); return x.protocol === 'https:' && !x.username && !x.password && !x.port && Object.hasOwn(IMG_HOSTS, x.hostname) && IMG_HOSTS[x.hostname](x.pathname); } catch { return false; }
+  };
   const safeImg = (u) => (okImg(u) ? u : BRAND_IMG);
   // eBay photos come in sizes (s-l140 … s-l1600) and as WebP; a grid card needs ~500px, not the 775 KB original
   const img = (u, px) => {

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import { db } from './_db.js';
-import { isImageType, readCapped, rows, safeImageUrl } from './_util.js';
+import { fetchPhoto, isImageType, readCapped, rows, safeImageUrl } from './_util.js';
 
 const S = 1080, BAND = 120, MAX_BYTES = 8 * 1024 * 1024;
 let logo = null;
@@ -17,12 +17,12 @@ export default async function handler(req, res) {
   if (!d || !id) return res.status(404).end();
   try {
     const [l] = await rows(await d(`bmx_listings?id=eq.${id}&status=eq.active&select=images`));
-    // allowlisted photo hosts only (safeImageUrl), checked again after the size rewrite; no redirects, 5 s,
-    // raster images only, at most 8 MB. Anything else is a 404.
+    // allowlisted photo hosts only (safeImageUrl), checked again after the size rewrite; no redirects (one same-host
+    // allowlisted hop at most), 5 s, raster images only, at most 8 MB. Anything else is a 404.
     const first = safeImageUrl(l?.images?.[0]);
     const src = first && safeImageUrl(first.replace(/\/s-l\d+\.(jpg|jpeg|png|webp)$/i, '/s-l1600.jpg'));
     if (!src) return res.status(404).end();
-    const r = await fetch(src, { redirect: 'error', signal: AbortSignal.timeout(5000) }).catch(() => null);
+    const r = await fetchPhoto(src);
     if (!r?.ok || !isImageType(r.headers.get('content-type'))) { await r?.body?.cancel().catch(() => {}); return res.status(404).end(); }
     const bytes = await readCapped(r, MAX_BYTES).catch(() => null);
     if (!bytes?.length) return res.status(404).end();
