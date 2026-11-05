@@ -1,6 +1,6 @@
 // GET /api/item?id=<n> -> { item, store }
 import { db } from './_db.js';
-import { fail, q, rows } from './_util.js';
+import { fail, q, rows, safeImages, safeLogo } from './_util.js';
 
 export default async function handler(req, res) {
   const d = db();
@@ -11,6 +11,8 @@ export default async function handler(req, res) {
     const [item] = await rows(await d(`bmx_listings?id=eq.${id}&select=*`));
     if (!item) return res.status(404).json({ error: 'That item is gone.' });
     const [store] = await rows(await d(`bmx_stores?handle=eq.${q(item.store_handle)}&select=handle,display_name,logo,contact,ship_cents,ebay_feedback,ebay_sold,ebay_followers`));
+    item.images = safeImages(item.images);
+    if (store) store.logo = safeLogo(store.logo);
     res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=120');
     return res.status(200).json({ item, store });
   } catch (e) { return fail(res, e); }

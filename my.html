@@ -74,7 +74,7 @@
       const minted = s.listings.filter((l) => l.token_id).length;
       return `<section class="step" style="margin:0 0 18px">
         <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
-          ${s.logo ? `<img src="${esc(s.logo)}" alt="" style="width:64px;height:64px;border-radius:50%;object-fit:cover">` : `<div style="width:64px;height:64px;border-radius:50%;background:var(--soft)"></div>`}
+          ${s.logo ? `<img src="${esc(BMX.safeImg(s.logo))}" alt="" style="width:64px;height:64px;border-radius:50%;object-fit:cover">` : `<div style="width:64px;height:64px;border-radius:50%;background:var(--soft)"></div>`}
           <div><b style="font-size:20px">${esc(s.display_name)}</b><div class="muted">bmarketx.com/str/${esc(s.handle)} · ${s.ebay_name ? '✓ verified eBay seller' : 'not yet verified'}</div></div>
           <a class="btn ghost" style="margin-left:auto;min-height:36px" href="/str/${esc(s.handle)}">View store</a>
         </div>

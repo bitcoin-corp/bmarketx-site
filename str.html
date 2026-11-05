@@ -33,7 +33,7 @@
     const link = (o) => { const u = new URLSearchParams({ page, sort, sq, ...o }); return `/str/${s.handle}?${u}`; };
     root.innerHTML = `
       <section class="sthead">
-        ${s.logo ? `<img class="av" src="${esc(s.logo)}" alt="">` : '<div class="av"></div>'}
+        ${s.logo ? `<img class="av" src="${esc(BMX.safeImg(s.logo))}" alt="">` : '<div class="av"></div>'}
         <div>
           <h1>${esc(s.display_name)}</h1>
           <div class="stats">

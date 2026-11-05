@@ -93,10 +93,15 @@
   function fillBsv(el) { if (usdPerBsv) el.textContent = `≈ ${(+el.dataset.bsv / 100 / usdPerBsv).toFixed(5)} BSV`; }
   const usd = (c) => '$' + (c / 100).toFixed(2);
 
+  // Photos and logos load only from the allowlisted photo host (as api/_util.js safeImageUrl). Anything else, such as
+  // an old link kept in this browser's Watchlist, shows the brand mark, so visitors never load a third-party URL.
+  const BRAND_IMG = '/brand/mark.svg';
+  const okImg = (u) => /^https:\/\/i\.ebayimg\.com\/[^\s"'<>\\]*$/i.test(u || '');
+  const safeImg = (u) => (okImg(u) ? u : BRAND_IMG);
   // eBay photos come in sizes (s-l140 … s-l1600) and as WebP; a grid card needs ~500px, not the 775 KB original
   const img = (u, px) => {
     const m = /^(https:\/\/i\.ebayimg\.com\/.+\/s-l)\d+\.(jpg|jpeg|png|webp)$/i.exec(u || '');
-    return m ? { src: `${m[1]}${px}.jpg`, webp: `${m[1]}${px}.webp` } : { src: u };
+    return m ? { src: `${m[1]}${px}.jpg`, webp: `${m[1]}${px}.webp` } : { src: safeImg(u) };
   };
   const picture = (u, px, attrs = '') => { const p = img(u, px);
     return `<picture>${p.webp ? `<source srcset="${esc(p.webp)}" type="image/webp">` : ''}<img src="${esc(p.src)}" decoding="async" ${attrs}></picture>`; };
@@ -162,5 +167,5 @@
     try { fetch('/api/event', { method: 'POST', keepalive: true, credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ event, ...cmp, page: location.pathname, ...extra }) }).catch(() => {}); } catch {}
   };
   try { if (!sessionStorage.getItem('bmx-v')) { sessionStorage.setItem('bmx-v', 1); track('visit'); } } catch {}
-  window.BMX = { track, mailTo, signInBox, esc, usd, card, picture, watch, recent, seen, toggleWatch, watching, after, api, pager, params, alertBar, priceReady, fillBsv, get usdPerBsv() { return usdPerBsv; } };
+  window.BMX = { track, mailTo, signInBox, esc, usd, card, picture, okImg, safeImg, watch, recent, seen, toggleWatch, watching, after, api, pager, params, alertBar, priceReady, fillBsv, get usdPerBsv() { return usdPerBsv; } };
 })();

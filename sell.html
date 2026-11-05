@@ -106,7 +106,7 @@ document.querySelectorAll('.note [data-tab]').forEach((a) => (a.onclick = (e) =>
       const s = await api('/api/import/ebay?store=' + encodeURIComponent(url.value));
       store = s;
       out.innerHTML = `
-        <section class="sthead">${s.logo ? `<img class="av" src="${esc(s.logo)}" alt="">` : ''}<div><h1>${esc(s.displayName)}</h1>
+        <section class="sthead">${s.logo ? `<img class="av" src="${esc(BMX.safeImg(s.logo))}" alt="">` : ''}<div><h1>${esc(s.displayName)}</h1>
           <div class="stats">${s.feedback ? `<span><b>${esc(s.feedback)}</b> positive feedback</span>` : ''}${s.sold ? `<span><b>${esc(s.sold)}</b> items sold</span>` : ''}${s.followers ? `<span><b>${esc(s.followers)}</b> followers</span>` : ''}</div>
           <div class="muted">${s.total ? s.total.toLocaleString() + ' items' : s.items.length + ' items'} · ${esc(s.tagline || '')}</div></div></section>
         <div id="next" style="margin:18px 0"></div>

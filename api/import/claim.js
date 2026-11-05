@@ -8,7 +8,7 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { fetchStore, storeName } from '../../lib/ebay.js';
 import { db } from '../_db.js';
 import { secret } from '../bwalletx/_auth.js';
-import { body, fail, originOk, q, rows, toRow, who, limited } from '../_util.js';
+import { body, fail, originOk, q, rows, safeImageUrl, toRow, who, limited } from '../_util.js';
 
 const codeFor = (name, me) => 'bmx-' + createHmac('sha256', secret()).update(`ebay-proof\n${name}\n${me}`).digest('hex').slice(0, 6);
 
@@ -47,7 +47,7 @@ export default async function handler(req, res) {
         await rows(await d(`bmx_stores?handle=eq.${q(name)}`, { method: 'PATCH', headers: { prefer: 'return=minimal' }, body: JSON.stringify(stats) }));
       } else {
         await rows(await d('bmx_stores', { method: 'POST', headers: { prefer: 'return=minimal' }, body: JSON.stringify({
-          handle: name, owner_key: me, display_name: s.displayName, tagline: s.tagline?.replace(code, '').trim() || null, logo: s.logo, ...stats,
+          handle: name, owner_key: me, display_name: s.displayName, tagline: s.tagline?.replace(code, '').trim() || null, logo: safeImageUrl(s.logo), ...stats,
         }) }));
       }
       return res.status(200).json({ handle: name, verified: true, pages: s.pages, total: s.total });
@@ -55,7 +55,8 @@ export default async function handler(req, res) {
 
     const page = Math.min(Math.max(parseInt(b.page, 10) || 1, 1), 200);
     const s = await fetchStore(name, page);
-    const list = s.items.map((i) => toRow(proved.handle, { ...i, source: 'ebay-page' })).filter(Boolean);
+    // read from eBay, not typed by the seller: a photo link off the allowlist is dropped, not an error
+    const list = s.items.map((i) => toRow(proved.handle, { ...i, source: 'ebay-page' }, { strict: false })).filter(Boolean);
     if (list.length) {
       await rows(await d('bmx_listings?on_conflict=store_handle,ebay_id', {
         method: 'POST', headers: { prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(list),

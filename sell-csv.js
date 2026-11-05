@@ -19,22 +19,26 @@ async function read(f) {
   if (!map) { out.innerHTML = '<p class="err">We couldn’t find a <b>Title</b> column. Is this the “All active listings” report from Seller Hub?</p>'; return; }
   if (map.missing) { out.innerHTML = `<p class="err">This file has no <b>${map.missing}</b> column, so we can’t list the items. Columns found: ${esc(map.head.join(', '))}</p>`; return; }
   found = { ...toItems(rows, map), fileName: f.name, map };
+  // only eBay photo links are accepted (the server refuses others); leave the rest off and say so
+  found.offPics = 0;
+  for (const i of found.items) { const n = i.images.length; i.images = i.images.filter(window.BMX.okImg); found.offPics += n - i.images.length; }
   render();
 }
 
 const guessHandle = (n) => String(n).toLowerCase().replace(/\.csv$/, '').replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'mystore';
 function render() {
-  const { items, skipped, currencies, fileName } = found;
+  const { items, skipped, currencies, fileName, offPics } = found;
   const noPics = items.filter((i) => !i.images.length).length;
   const qty = items.reduce((a, i) => a + i.quantity, 0), value = items.reduce((a, i) => a + i.priceCents * i.quantity, 0);
   out.innerHTML = `
     <div class="note" style="margin-top:16px"><b>${items.length.toLocaleString()} listings found</b> in ${esc(fileName)} · ${qty.toLocaleString()} items in stock · ${usd(value)} total at your prices
       ${skipped.length ? `<br><span class="err">${skipped.length} rows skipped</span> <span class="muted">(${esc(summary(skipped))})</span>` : ''}
+      ${offPics ? `<br><span class="err">${offPics.toLocaleString()} photo links left off</span> <span class="muted">(only eBay photo links, https://i.ebayimg.com/…, can be used)</span>` : ''}
       ${currencies.some((c) => c !== 'USD') ? `<br><span class="err">Prices are in ${esc(currencies.join(', '))}.</span> bMarketX prices are in US dollars for now, so check them after the move.` : ''}
       ${noPics ? `<br><span class="muted">${noPics.toLocaleString()} listings have no photo link in this file. eBay’s active-listings report leaves photos out; add them after the move, or use the Store link tab to copy them.</span>` : ''}
     </div>
     <div class="tblwrap"><table class="tbl"><thead><tr><th></th><th>Title</th><th>Condition</th><th class="n">Qty</th><th class="n">Price</th></tr></thead><tbody>
-      ${items.slice(0, 200).map((i) => `<tr><td>${i.images[0] ? `<img src="${esc(i.images[0])}" alt="" style="width:40px;height:40px;object-fit:contain">` : ''}</td><td>${esc(i.title)}${i.sku ? `<div class="muted">${esc(i.sku)}</div>` : ''}</td><td>${esc(i.condition || '')}</td><td class="n">${i.quantity}</td><td class="n">${usd(i.priceCents)}</td></tr>`).join('')}
+      ${items.slice(0, 200).map((i) => `<tr><td>${i.images[0] ? `<img src="${esc(BMX.safeImg(i.images[0]))}" alt="" style="width:40px;height:40px;object-fit:contain">` : ''}</td><td>${esc(i.title)}${i.sku ? `<div class="muted">${esc(i.sku)}</div>` : ''}</td><td>${esc(i.condition || '')}</td><td class="n">${i.quantity}</td><td class="n">${usd(i.priceCents)}</td></tr>`).join('')}
     </tbody></table></div>
     ${items.length > 200 ? `<p class="muted">Showing the first 200 of ${items.length.toLocaleString()}.</p>` : ''}
     <div class="form2">

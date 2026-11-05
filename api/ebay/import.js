@@ -24,7 +24,8 @@ export default async function handler(req, res) {
     const [st] = await rows(await d(`bmx_stores?handle=eq.${q(s.handle)}&owner_key=eq.${q(me)}&select=handle`));
     if (!st) return res.status(403).json({ error: 'That store isn’t yours.' });
     const r = await activeListings(s.t, page);
-    const list = r.items.map((i) => toRow(st.handle, { ...i, source: 'ebay-page' })).filter(Boolean);
+    // from eBay's own API: a photo link off the allowlist is dropped, not an error
+    const list = r.items.map((i) => toRow(st.handle, { ...i, source: 'ebay-page' }, { strict: false })).filter(Boolean);
     if (list.length) await rows(await d('bmx_listings?on_conflict=store_handle,ebay_id', { method: 'POST', headers: { prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(list) }));
     return res.status(200).json({ handle: st.handle, page, pages: r.pages, total: r.total, imported: list.length });
   } catch (e) { return fail(res, e); }

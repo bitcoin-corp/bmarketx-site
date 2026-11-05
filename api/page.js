@@ -5,13 +5,14 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { db } from './_db.js';
-import { q, rows } from './_util.js';
+import { BRAND_OG, q, rows, safeImageUrl } from './_util.js';
 
 const files = {};
 const page = (k) => (files[k] ||= readFileSync(join(process.cwd(), `${k}.html`), 'utf8'));
 const esc = (t) => String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const usd = (c) => '$' + (c / 100).toFixed(2);
-const photo = (u) => (u || '').replace(/\/s-l\d+\.(jpg|jpeg|png|webp)$/i, '/s-l1200.jpg');
+// og:image is fetched by X, WhatsApp and our own unfurlers, so only allowlisted photo links go in it; else the brand card
+const photo = (u) => { const s = safeImageUrl(u); return (s && safeImageUrl(s.replace(/\/s-l\d+\.(jpg|jpeg|png|webp)$/i, '/s-l1200.jpg'))) || BRAND_OG; };
 
 function head(html, { title, desc, image, url }) {
   const tags = `<title>${esc(title)}</title>
@@ -41,14 +42,14 @@ export default async function handler(req, res) {
       const [i] = id ? await rows(await d(`bmx_listings?id=eq.${id}&select=id,title,price_cents,condition,images,store_handle`)) : [];
       if (i) html = head(html, { title: `${i.title} | bMarketX`, url: `https://bmarketx.com/itm/${i.id}`,
         desc: `${usd(i.price_cents)} · ${i.condition || 'Used'} · from ${i.store_handle}. Paid in BSV straight to the seller with bWalletX.`,
-        image: photo(i.images?.[0]) || 'https://bmarketx.com/brand/og.png' });
+        image: photo(i.images?.[0]) });
     }
     if (d && kind === 'str') {
       const h = String(req.query.handle || '').toLowerCase();
       const [s] = /^[a-z0-9._-]{2,64}$/.test(h) ? await rows(await d(`bmx_stores?handle=eq.${q(h)}&select=handle,display_name,tagline,logo,verified_at`)) : [];
       if (s) html = head(html, { title: `${s.display_name} | bMarketX`, url: `https://bmarketx.com/str/${s.handle}`,
         desc: s.tagline || `${s.display_name}${s.verified_at ? ', a verified eBay seller,' : ''} on bMarketX. Paid in BSV straight to the seller with bWalletX.`,
-        image: s.logo || 'https://bmarketx.com/brand/og.png' });
+        image: safeImageUrl(s.logo) || BRAND_OG });
       // unclaimed: the name from the address only, nothing from the eBay store
       else if (/^[a-z0-9._-]{2,64}$/.test(h)) html = head(html, { title: `${h} on bMarketX: claim your store`, url: `https://bmarketx.com/str/${h}${v}`,
         desc: `bmarketx.com/str/${h} is kept for the eBay seller ${h}. Move your store in about a minute and get paid in BSV straight to your wallet.`,

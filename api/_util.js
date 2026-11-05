@@ -27,13 +27,68 @@ export const fail = (res, e) => {
 export { originOk } from './bwalletx/_auth.js';
 
 const clip = (v, n) => (v == null || v === '' ? null : String(v).slice(0, n));
-const HTTPS_IMG = /^https:\/\/[^\s"'<>]+$/i;
-/** One listing as a bmx_listings row, checked and trimmed. Anything a browser sends goes through here. */
-export function toRow(handle, i) {
+
+// Photo and logo links. Listing photos are fetched by our server (api/square.js), put in og:image (so X, WhatsApp
+// and our own bChatX unfurler fetch them) and loaded by every visitor's browser, so a seller-supplied link must
+// never point at our own services, private addresses, redirectors or trackers. Only these hosts are allowed:
+//   i.ebayimg.com  eBay's photo CDN: every eBay import (CSV PicURL, store page, Sign in with eBay) uses it.
+// bMarketX has no photo upload or storage of its own yet; when it gets one, add exactly that host here.
+const IMAGE_HOSTS = new Set(['i.ebayimg.com']);
+/** The link as a clean https URL on an allowed photo host, or null. Use the returned value, not the input. */
+export function safeImageUrl(url) {
+  if (typeof url !== 'string' || url.length > 2048 || !/^https:\/\/[^\s"'<>\\]+$/i.test(url)) return null;
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  if (u.protocol !== 'https:' || u.username || u.password || u.port || !IMAGE_HOSTS.has(u.hostname)) return null;
+  return u.href;
+}
+/** Content types we read as photos: raster only (no SVG, which can carry scripts and external references). */
+export const isImageType = (ct) => /^image\/(jpeg|png|webp|gif|avif)$/i.test(String(ct || '').split(';')[0].trim());
+/** A fetch response body as a Buffer, or null once it passes `max` bytes (by content-length or while streaming). */
+export async function readCapped(r, max) {
+  if (+r.headers.get('content-length') > max) { await r.body?.cancel().catch(() => {}); return null; }
+  if (!r.body) return Buffer.alloc(0);
+  const reader = r.body.getReader(), parts = [];
+  let n = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return Buffer.concat(parts, n);
+    n += value.byteLength;
+    if (n > max) { await reader.cancel().catch(() => {}); return null; }
+    parts.push(value);
+  }
+}
+/** The brand pictures shown in place of a photo or logo that isn't on the allowlist. */
+export const BRAND_IMAGE = '/brand/mark.svg';
+export const BRAND_OG = 'https://bmarketx.com/brand/og.png';
+/** A stored photo list for the browser: allowed links only; the brand picture if none of them were allowed
+ *  (unless { brand: false }). */
+export function safeImages(list, { brand = true } = {}) {
+  const all = Array.isArray(list) ? list : [];
+  const ok = all.map(safeImageUrl).filter(Boolean);
+  return ok.length || !all.length || !brand ? ok : [BRAND_IMAGE];
+}
+/** A stored store logo for the browser: the logo if allowed, the brand picture if not, null if none. */
+export const safeLogo = (u) => (u ? safeImageUrl(u) || BRAND_IMAGE : null);
+const photoError = (title, u) => Object.assign(new Error(
+  `The photo link for "${String(title).slice(0, 40)}" can’t be used (${String(u).slice(0, 80)}). Photos must be eBay photo links that start with https://i.ebayimg.com/.`,
+), { status: 400 });
+
+/** One listing as a bmx_listings row, checked and trimmed. Anything a browser sends goes through here.
+ *  A photo link off the allowlist throws a 400 (strict: anything a seller typed or uploaded); with
+ *  { strict: false } it is dropped instead (listings read from eBay itself). */
+export function toRow(handle, i, { strict = true } = {}) {
   const price = Math.round(+i.priceCents);
   const title = String(i.title || '').replace(/\s+/g, ' ').trim();
   if (!title || !(price > 0) || price > 100_000_000) return null;
-  const images = (Array.isArray(i.images) ? i.images : i.image ? [i.image] : []).filter((u) => HTTPS_IMG.test(u)).slice(0, 12);
+  const given = (Array.isArray(i.images) ? i.images : i.image ? [i.image] : []).filter((u) => u != null && String(u).trim() !== '');
+  const images = [];
+  for (const u of given) {
+    const ok = safeImageUrl(typeof u === 'string' ? u.trim() : u);
+    if (ok) images.push(ok);
+    else if (strict) throw photoError(title, u);
+  }
+  images.splice(12);
   const was = Math.round(+i.wasCents) || null;
   return {
     store_handle: handle, title: title.slice(0, 80), price_cents: price, was_cents: was && was > price ? was : null,

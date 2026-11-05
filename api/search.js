@@ -1,6 +1,6 @@
 // GET /api/search?q=&page= -> { items, total } across every store
 import { db } from './_db.js';
-import { fail, q, rows } from './_util.js';
+import { fail, q, rows, safeImages } from './_util.js';
 
 export default async function handler(req, res) {
   const d = db();
@@ -11,7 +11,7 @@ export default async function handler(req, res) {
   f += `&order=created_at.desc&limit=${per}&offset=${(page - 1) * per}`;
   try {
     const r = await d(f, { headers: { prefer: 'count=exact' } });
-    const items = await rows(r);
+    const items = (await rows(r)).map((i) => ({ ...i, images: safeImages(i.images) }));
     res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=120');
     return res.status(200).json({ items, total: +(r.headers.get('content-range') || '').split('/')[1] || items.length });
   } catch (e) { return fail(res, e); }

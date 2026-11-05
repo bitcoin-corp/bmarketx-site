@@ -1,6 +1,6 @@
 // GET /api/store?handle=<h>&q=&sort=&page= -> { store, items, total }
 import { db } from './_db.js';
-import { fail, q, rows } from './_util.js';
+import { fail, q, rows, safeImages, safeLogo } from './_util.js';
 
 const SORT = { best: 'created_at.desc', low: 'price_cents.asc', high: 'price_cents.desc', new: 'created_at.desc' };
 export default async function handler(req, res) {
@@ -15,7 +15,8 @@ export default async function handler(req, res) {
     if (req.query.q) f += `&title=ilike.${q('*' + String(req.query.q).replace(/[*,()]/g, ' ') + '*')}`;
     f += `&order=${SORT[req.query.sort] || SORT.best}&limit=${per}&offset=${(page - 1) * per}`;
     const r = await d(f, { headers: { prefer: 'count=exact' } });
-    const items = await rows(r);
+    const items = (await rows(r)).map((i) => ({ ...i, images: safeImages(i.images) }));
+    store.logo = safeLogo(store.logo);
     const total = +(r.headers.get('content-range') || '').split('/')[1] || items.length;
     res.setHeader('Cache-Control', 's-maxage=30, stale-while-revalidate=120');
     return res.status(200).json({ store, items, total, page, pages: Math.max(1, Math.ceil(total / per)) });

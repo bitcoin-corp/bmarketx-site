@@ -34,7 +34,7 @@
       <div class="main">${i.images[0] ? BMX.picture(i.images[0], 800, `alt="${esc(i.title)}" fetchpriority="high"`) : ''}</div>
       <div>
         <h1>${esc(i.title)}</h1>
-        <a class="seller" href="/str/${s.handle}">${s.logo ? `<img src="${esc(s.logo)}" alt="">` : ''}<div><b>${esc(s.display_name)}</b><div class="muted" style="font-size:12px">${s.ebay_feedback ? esc(s.ebay_feedback) + ' positive' : ''}${s.ebay_sold ? ' · ' + esc(s.ebay_sold) + ' sold' : ''}</div></div></a>
+        <a class="seller" href="/str/${s.handle}">${s.logo ? `<img src="${esc(BMX.safeImg(s.logo))}" alt="">` : ''}<div><b>${esc(s.display_name)}</b><div class="muted" style="font-size:12px">${s.ebay_feedback ? esc(s.ebay_feedback) + ' positive' : ''}${s.ebay_sold ? ' · ' + esc(s.ebay_sold) + ' sold' : ''}</div></div></a>
         <div><span class="price">US ${usd(i.price_cents)}</span>${i.was_cents ? `<span class="was">${usd(i.was_cents)}</span>` : ''}</div>
         <div class="bsv" data-bsv="${i.price_cents}" style="font-size:14px"></div>
         ${i.promo ? `<div class="promo" style="margin-top:6px">${esc(i.promo)}</div>` : ''}
