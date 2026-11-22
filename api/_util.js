@@ -1,5 +1,5 @@
-import { readCookie, verifySession } from '@bwalletx/connect/server';
-import { secret } from './bwalletx/_auth.js';
+import { verifySession } from '@bwalletx/connect/server';
+import { secret, sessionToken } from './bwalletx/_auth.js';
 import { db } from './_db.js';
 export { body } from './bwalletx/_auth.js';
 
@@ -7,7 +7,7 @@ export { body } from './bwalletx/_auth.js';
 export async function who(req) {
   const s = secret();
   if (!s) return null;
-  const p = await verifySession(readCookie(req.headers.cookie, 'bwx_session'), { secret: s });
+  const p = await verifySession(sessionToken(req.headers.cookie), { secret: s });
   return p?.sub ?? null;
 }
 export const q = (v) => encodeURIComponent(String(v));
