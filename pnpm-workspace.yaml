@@ -1,2 +1,2 @@
 minimumReleaseAgeExclude:
-  - '@bwalletx/connect@0.5.4'
+  - '@bwalletx/connect@0.9.0'
