@@ -15,6 +15,25 @@
     return (window.bmxWallet = wallet);
   }
 
+  // A payment bWalletX didn't answer may still have gone out (connect 0.9.0: NO_ANSWER_MAYBE_SENT, maybeSent). Until
+  // we know, never offer to pay again: a pending marker per order (localStorage) holds the order, and the next press
+  // checks this site's order status and bWalletX's own record (listActions by the order's label) first.
+  const isMaybeSent = (er) => !!er && (er.code === 'NO_ANSWER_MAYBE_SENT' || er.maybeSent === true);
+  const PENDING = 'bmx-pay-pending';
+  const pendingAll = () => { try { return JSON.parse(localStorage.getItem(PENDING) || '{}') || {}; } catch { return {}; } };
+  const pending = {
+    get: (k) => pendingAll()[k] || null,
+    set: (k, v) => { try { const m = pendingAll(); if (v) m[k] = { ...v, at: Date.now() }; else delete m[k]; localStorage.setItem(PENDING, JSON.stringify(m)); } catch {} },
+    forListing: (id) => Object.entries(pendingAll()).find(([, v]) => v && v.listing === id && Date.now() - v.at < 7 * 864e5) || null,
+  };
+  /** bWalletX's record of a payment with this label: { txid, status } if one exists (anything not failed counts), else
+   *  null. Throws when the wallet can't be asked. */
+  async function sentWithLabel(w, label) {
+    const r = await w.listActions({ labels: [label], labelQueryMode: 'any', limit: 10 });
+    const a = (r && r.actions || []).find((x) => x && x.status !== 'failed');
+    return a ? { txid: a.txid, status: a.status } : null;
+  }
+
   async function signedIn() {
     const j = await fetch('/api/bwalletx/session', { credentials: 'same-origin' }).then((r) => r.json()).catch(() => ({}));
     return j.identityKey || null;
@@ -34,6 +53,9 @@
       document.addEventListener('bmarketx-wallet', () => { m.remove(); window.BMXcheckout(item, store); }, { once: true });
       return;
     }
+    // A payment for this item that may already have gone out: back to that order's check, not a new quote.
+    const p = pending.forListing(item.id);
+    if (p && p[1].o) { review(modal('<div></div>'), p[1].o, p[1].store); return; }
     const a = saved();
     const ship = item.ship_cents ?? store.ship_cents ?? 0;
     const max = Math.min(item.quantity, 100);
@@ -58,7 +80,7 @@
       try {
         const { order: o } = await api('/api/order', { method: 'POST', body: JSON.stringify({ action: 'quote', listingId: item.id, qty: +f.qty.value || 1, shipTo }) });
         BMX.track('checkout_started', { cents: o.total_cents });
-        review(m, o, store);
+        review(m, { ...o, listing_id: item.id }, store);
       } catch (er) { e.textContent = er.message; btn.disabled = false; btn.textContent = 'Review payment'; }
     };
   };
@@ -72,33 +94,75 @@
       <div class="ck-row"><button class="btn ghost" type="button" data-x>Cancel</button><button class="btn" type="button" data-pay>Pay with bWalletX</button></div>
       <p class="err" data-e></p>`;
     const e = box.querySelector('[data-e]'), btn = box.querySelector('[data-pay]');
-    box.querySelector('[data-x]').onclick = () => { api('/api/order', { method: 'POST', body: JSON.stringify({ action: 'cancel', id: o.id }) }).catch(() => {}); m.remove(); };
+    const label = `bmx-order-${o.id}`;
+    const MAYBE = 'Check bWalletX: this may already be paid. Don’t pay again until it’s checked.';
+    const hold = (msg) => { e.textContent = msg; btn.disabled = false; btn.textContent = 'Check bWalletX'; };
+    const done = (txid) => {
+      pending.set(label, null);
+      BMX.track('purchase', { cents: o.total_cents });
+      box.innerHTML = `<h3>Paid. Thank you!</h3><p>${esc(store.display_name)} has your order and your address. Your receipt is in <a class="u" href="/my#purchases">Purchase history</a>.</p>
+        ${txid ? `<p class="muted" style="font-size:12px">Payment <a class="u" target="_blank" rel="noopener" href="https://whatsonchain.com/tx/${esc(txid)}">${esc(txid.slice(0, 16))}…</a></p>` : ''}
+        <div class="ck-row"><a class="btn" href="/my#purchases">See my order</a></div>`;
+    };
+    // While a payment may be out, Cancel only closes this box: the order stays, so it can still be matched.
+    box.querySelector('[data-x]').onclick = () => {
+      if (!pending.get(label)) api('/api/order', { method: 'POST', body: JSON.stringify({ action: 'cancel', id: o.id }) }).catch(() => {});
+      m.remove();
+    };
+    if (pending.get(label)) hold(MAYBE);
     let sent = null;   // once the wallet has paid, never ask it to pay again: only re-check
     btn.onclick = async () => {
       btn.disabled = true; e.textContent = '';
+      // A payment that may be out: check before anything else, and only then allow paying.
+      if (!sent && pending.get(label)) {
+        btn.textContent = 'Checking…';
+        try {
+          const j = await api('/api/order');
+          const mine = (j.bought || []).find((x) => x.id === o.id && x.status !== 'quoted');
+          if (mine) return done(mine.txid);
+          const found = await sentWithLabel(await wallet(), label);
+          if (found) {
+            return hold(`bWalletX shows a payment for this order (${found.txid ? found.txid.slice(0, 16) + '…' : found.status}). Don’t pay again. Send the seller that payment id, or contact us with this page open.`);
+          }
+          pending.set(label, null);
+          e.textContent = 'bWalletX has no payment for this order. You can pay now.';
+          btn.disabled = false; btn.textContent = 'Pay with bWalletX';
+        } catch {
+          hold('Couldn’t reach bWalletX to check. Open bWalletX, then press Check bWalletX again. Don’t pay again until then.');
+        }
+        return;
+      }
       try {
         if (!sent) {
           btn.textContent = 'Waiting for your wallet…';
           const w = await wallet();
-          const r = await w.createAction({
-            description: `bMarketX order ${o.id}`.slice(0, 50),
-            outputs: [{ lockingScript: o.locking_script, satoshis: o.sats, outputDescription: `Payment to ${store.display_name}`.slice(0, 50) }],
-            labels: ['bmarketx'], options: { randomizeOutputs: false },
-          });
+          let r;
+          try {
+            r = await w.createAction({
+              description: `bMarketX order ${o.id}`.slice(0, 50),
+              outputs: [{ lockingScript: o.locking_script, satoshis: o.sats, outputDescription: `Payment to ${store.display_name}`.slice(0, 50) }],
+              labels: ['bmarketx', label], options: { randomizeOutputs: false },
+            });
+          } catch (er) {
+            if (isMaybeSent(er)) {
+              // Only what the check needs (no postal address).
+              const keep = { id: o.id, sats: o.sats, total_cents: o.total_cents, usd_per_bsv: o.usd_per_bsv, locking_script: o.locking_script, listing_id: o.listing_id ?? null };
+              pending.set(label, { o: keep, store: { display_name: store.display_name }, listing: keep.listing_id });
+              return hold(MAYBE);
+            }
+            throw er;
+          }
           if (!r?.tx) throw new Error('Your wallet didn’t send the payment.');
           sent = { txid: r.txid, beef: hex(r.tx) };
         }
         btn.textContent = 'Checking the payment…';
         await api('/api/order', { method: 'POST', body: JSON.stringify({ action: 'pay', id: o.id, ...sent }) });
-        BMX.track('purchase', { cents: o.total_cents });
-        box.innerHTML = `<h3>Paid. Thank you!</h3><p>${esc(store.display_name)} has your order and your address. Your receipt is in <a class="u" href="/my#purchases">Purchase history</a>.</p>
-          <p class="muted" style="font-size:12px">Payment <a class="u" target="_blank" rel="noopener" href="https://whatsonchain.com/tx/${esc(sent.txid)}">${esc(sent.txid.slice(0, 16))}…</a></p>
-          <div class="ck-row"><a class="btn" href="/my#purchases">See my order</a></div>`;
+        done(sent.txid);
       } catch (er) {
         e.textContent = sent ? `${er.message} Don’t pay again: press the button to check once more.` : er.message;
         btn.disabled = false; btn.textContent = sent ? 'Check again' : 'Pay with bWalletX';
       }
     };
   }
-  window.BMXpay = { hex, fromHex, wallet };
+  window.BMXpay = { hex, fromHex, wallet, isMaybeSent, pending, sentWithLabel };
 })();

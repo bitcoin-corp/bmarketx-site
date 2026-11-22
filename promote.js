@@ -37,8 +37,28 @@
     m.onclick = (ev) => { if (ev.target === m) m.remove(); };
     f.querySelector('[data-x]').onclick = () => m.remove();
     let paid = false;
+    // A payment bWalletX didn't answer may still have gone out (connect 0.9.0). Until it's checked, this listing's
+    // Promote doesn't pay again: the pending marker names the campaign, and bWalletX's record is checked by its label.
+    const P = BMXpay.pending, key = `bads-item-${item.id}`;
+    const MAYBE = 'Check bWalletX: this may already be paid. Don’t pay again until it’s checked.';
+    const hold = (msg) => { e.textContent = msg; btn.disabled = false; btn.textContent = 'Check bWalletX'; };
+    if (P.get(key)) hold(MAYBE);
     f.onsubmit = async (ev) => {
       ev.preventDefault(); if (paid) return; e.textContent = ''; btn.disabled = true;
+      const p = P.get(key);
+      if (p) {
+        btn.textContent = 'Checking bWalletX…';
+        try {
+          const found = await BMXpay.sentWithLabel(await BMXpay.wallet(), p.label);
+          if (found) return hold(`bWalletX shows a payment for this promotion (${found.txid ? found.txid.slice(0, 16) + '…' : found.status}). Don’t pay again. Contact us with this page open.`);
+          P.set(key, null);
+          e.textContent = 'bWalletX has no payment for that promotion. You can pay now.';
+          btn.disabled = false; btn.textContent = 'Review and pay';
+        } catch {
+          hold('Couldn’t reach bWalletX to check. Open bWalletX, then press Check bWalletX again. Don’t pay again until then.');
+        }
+        return;
+      }
       try {
         btn.textContent = 'Waiting for your wallet…';
         const w = await BMXpay.wallet();
@@ -49,8 +69,15 @@
         await ads(`/campaigns/${c.id}/creative`, { method: 'POST', body: JSON.stringify({ stillUrl: `https://bmarketx.com/api/square?id=${item.id}`, alt: item.title.slice(0, 120) }) });
         const q = await ads(`/campaigns/${c.id}/checkout`, { method: 'POST', body: '{}' });
         btn.textContent = 'Approve the payment in your wallet…';
-        const r = await w.createAction({ description: 'bAds promotion'.slice(0, 50), labels: ['bmarketx', 'bads'],
-          outputs: q.payTo.map((p) => ({ lockingScript: p.lockingScript, satoshis: p.sats, outputDescription: 'bAds promotion' })), options: { randomizeOutputs: false } });
+        const label = `bads-campaign-${String(c.id).toLowerCase()}`;
+        let r;
+        try {
+          r = await w.createAction({ description: 'bAds promotion'.slice(0, 50), labels: ['bmarketx', 'bads', label],
+            outputs: q.payTo.map((p) => ({ lockingScript: p.lockingScript, satoshis: p.sats, outputDescription: 'bAds promotion' })), options: { randomizeOutputs: false } });
+        } catch (er) {
+          if (BMXpay.isMaybeSent(er)) { P.set(key, { label, campaign: c.id }); return hold(MAYBE); }
+          throw er;
+        }
         paid = true;
         // 409 not_seen: the ad server can't see the payment yet; asking again is safe (same quote and txid)
         for (let k = 0; ; k++) {
